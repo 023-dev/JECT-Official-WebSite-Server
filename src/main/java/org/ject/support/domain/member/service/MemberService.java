@@ -1,5 +1,8 @@
 package org.ject.support.domain.member.service;
 
+import static org.ject.support.domain.member.exception.MemberErrorCode.ALREADY_EXIST_MEMBER;
+
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.ject.support.common.security.jwt.JwtTokenProvider;
 import org.ject.support.domain.member.JobFamily;
@@ -15,6 +18,9 @@ import org.ject.support.domain.member.entity.Member;
 import org.ject.support.domain.member.exception.MemberErrorCode;
 import org.ject.support.domain.member.exception.MemberException;
 import org.ject.support.domain.member.repository.MemberRepository;
+import org.ject.support.domain.recruit.domain.Semester;
+import org.ject.support.domain.recruit.exception.SemesterErrorCode;
+import org.ject.support.domain.recruit.exception.SemesterException;
 import org.ject.support.domain.recruit.repository.SemesterRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -22,10 +28,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-
-import static org.ject.support.domain.member.exception.MemberErrorCode.ALREADY_EXIST_MEMBER;
 
 @Service
 @RequiredArgsConstructor
@@ -66,9 +68,10 @@ public class MemberService {
     private Member createTempMemberWithPin(RegisterRequest registerRequest, String email) {
         String encodedPin = passwordEncoder.encode(registerRequest.pin());
 
-        // Apply 생성
+        Semester semester = semesterRepository.findRecruitingSemester()
+                .orElseThrow(() -> new SemesterException(SemesterErrorCode.NOT_FOUND_RECRUITING_SEMESTER));
 
-        Member member = registerRequest.toEntity(email, encodedPin);
+        Member member = registerRequest.toEntity(semester.getId(), email, encodedPin);
 
         return memberRepository.save(member);
     }
