@@ -82,8 +82,49 @@ class ApplyRepositoryTest {
         List<Apply> result = applyRepository.findByRecruitAndStatus(beRecruit, TEMP_SAVED);
 
         // then
-        assertThat(result).hasSize(2);
-        assertThat(result).containsExactlyInAnyOrder(be2TempApply, be3TempApply);
+        assertThat(result)
+                .hasSize(2)
+                .containsExactlyInAnyOrder(be2TempApply, be3TempApply);
+    }
+
+    @Test
+    void 상태별_지원서_수_조회_성공() {
+        // given
+        Member feApplicant = createMember("emailFE@test.com", Role.APPLY);
+        Member beApplicant = createMember("emailBE@test.com", Role.APPLY);
+        memberRepository.saveAll(List.of(feApplicant, beApplicant));
+
+        Apply feTempApply = getApply(feApplicant, feRecruit, TEMP_SAVED);
+        Apply beSubmitApply = getApply(beApplicant, beRecruit, SUBMITTED);
+        applyRepository.saveAll(List.of(feTempApply, beSubmitApply));
+
+        // when
+        Long count = applyRepository.countByStatus(SUBMITTED);
+
+        // then
+        assertThat(count).isEqualTo(1L);
+    }
+
+    @Test
+    void 지원ID와_지원서의_상태로_지원서를_상세_조회한다() {
+        // given
+        Member feApplicant = createMember("emailFE@test.com", Role.APPLY);
+        Member be1Applicant = createMember("emailBE1@test.com", Role.APPLY);
+        memberRepository.saveAll(List.of(feApplicant, be1Applicant));
+
+        Apply feTempApply = getApply(feApplicant, feRecruit, TEMP_SAVED);
+        Apply be1SubmitApply = getApply(be1Applicant, beRecruit, TEMP_SAVED);
+        applyRepository.saveAll(List.of(feTempApply, be1SubmitApply));
+
+        // when
+        Apply result = applyRepository.findByIdAndStatusWithMember(feTempApply.getId(), TEMP_SAVED)
+                .orElseThrow();
+
+        // then
+        assertThat(result).isEqualTo(feTempApply);
+        assertThat(result.getMember()).isEqualTo(feApplicant);
+        assertThat(result.getRecruit()).isEqualTo(feRecruit);
+        assertThat(result.getStatus()).isEqualTo(TEMP_SAVED);
     }
 
     private Recruit getRecruit(JobFamily jobFamily) {
