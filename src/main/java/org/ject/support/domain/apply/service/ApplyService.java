@@ -1,14 +1,5 @@
 package org.ject.support.domain.apply.service;
 
-import static org.ject.support.domain.apply.domain.Apply.Status.JOINED;
-import static org.ject.support.domain.apply.domain.Apply.Status.SUBMITTED;
-import static org.ject.support.domain.apply.domain.Apply.Status.TEMP_SAVED;
-import static org.ject.support.domain.apply.exception.ApplyErrorCode.ALREADY_SUBMITTED;
-import static org.ject.support.domain.apply.exception.ApplyErrorCode.NOT_FOUND_APPLY;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.ject.support.common.util.Map2JsonSerializer;
@@ -36,8 +27,19 @@ import org.ject.support.domain.recruit.exception.QuestionException;
 import org.ject.support.domain.recruit.exception.RecruitErrorCode;
 import org.ject.support.domain.recruit.exception.RecruitException;
 import org.ject.support.domain.recruit.repository.RecruitRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+
+import static org.ject.support.domain.apply.domain.Apply.Status.JOINED;
+import static org.ject.support.domain.apply.domain.Apply.Status.SUBMITTED;
+import static org.ject.support.domain.apply.domain.Apply.Status.TEMP_SAVED;
+import static org.ject.support.domain.apply.exception.ApplyErrorCode.ALREADY_SUBMITTED;
+import static org.ject.support.domain.apply.exception.ApplyErrorCode.NOT_FOUND_APPLY;
 
 @Slf4j
 @Service
@@ -54,7 +56,7 @@ public class ApplyService implements ApplyUsecase {
     @PeriodAccessible(permitAllJob = true)
     @Transactional(readOnly = true)
     public TempApplicationFormResponse findTempApplicationForm(final Long memberId) {
-        Apply apply = applyRepository.findByMemberId(memberId)
+        Apply apply = applyRepository.findByMemberIdInActiveRecruit(memberId, LocalDateTime.now())
                 .orElseThrow(() -> new ApplyException(NOT_FOUND_APPLY));
 
         if (apply.isNotTempSaved()) {
@@ -63,6 +65,7 @@ public class ApplyService implements ApplyUsecase {
 
         ApplicationForm tempApplicationForm = apply.getApplicationForm();
         return TempApplicationFormResponse.from(
+                apply.getRecruit().getJobFamily(),
                 string2MapSerializer.serializeAsMap(tempApplicationForm.getContent()),
                 tempApplicationForm.getPortfolios()
                         .stream()
@@ -77,7 +80,7 @@ public class ApplyService implements ApplyUsecase {
                                            Map<String, String> answers,
                                            List<ApplyPortfolioDto> portfolios) {
         // 1. memberId를 바탕으로 apply 조회
-        Apply apply = applyRepository.findByMemberId(memberId)
+        Apply apply = applyRepository.findByMemberIdInActiveRecruit(memberId, LocalDateTime.now())
                 .orElseThrow(() -> new ApplyException(NOT_FOUND_APPLY));
 
         Apply.Status applyStatus = apply.getStatus();
@@ -114,7 +117,7 @@ public class ApplyService implements ApplyUsecase {
     @Transactional
     public void deleteProfileAndTempApplicationForm(Long memberId) {
         // 지원 정보 조회
-        Apply apply = applyRepository.findByMemberId(memberId)
+        Apply apply = applyRepository.findByMemberIdInActiveRecruit(memberId, LocalDateTime.now())
                 .orElseThrow(() -> new ApplyException(NOT_FOUND_APPLY));
 
         // 지원서를 임시 저장하지 않은 경우 실패
@@ -145,33 +148,33 @@ public class ApplyService implements ApplyUsecase {
         validateQuestions(answers, recruit);
 
         // 3. 지원 정보 조회
-        Apply apply = applyRepository.findByMemberId(memberId)
+        Apply apply = applyRepository.findByMemberIdInActiveRecruit(memberId, LocalDateTime.now())
                 .orElseThrow(() -> new ApplyException(NOT_FOUND_APPLY));
-
-        // 4. Portfolio와 ApplicationForm 영속화
-        if (apply.isSubmitted()) {
-            throw new ApplyException(ALREADY_SUBMITTED);
-        }
 
         String content = map2JsonSerializer.serializeAsString(answers);
         List<Portfolio> newPortfolios = getNewPortfolios(portfolios);
 
-        // 임시 저장한 지원서가 있을 경우 업데이트
+        // 4. ApplicationForm 준비
+        ApplicationForm applicationForm;
         if (apply.isTempSaved()) {
-            ApplicationForm applicationForm = apply.getApplicationForm();
+            applicationForm = apply.getApplicationForm();
             applicationForm.updateContentAndPortfolios(content, newPortfolios);
         } else {
-            ApplicationForm applicationForm = createApplicationForm(apply, content, newPortfolios);
+            applicationForm = createApplicationForm(apply, content, newPortfolios);
             applicationFormRepository.save(applicationForm);
-            apply.updateApplicationForm(applicationForm);
         }
-        apply.updateStatus(SUBMITTED);
+
+        // 5. Apply 엔티티에 제출 위임 (검증 및 상태 변경 포함)
+        apply.submit(applicationForm);
     }
 
     @Override
     @PeriodAccessible(permitAllJob = true)
     public ApplyStatusResponse checkApplyStatus(Long memberId) {
-        return applyRepository.findByMemberId(memberId)
+        memberRepository.findById(memberId)
+                .orElseThrow(() -> new MemberException(MemberErrorCode.NOT_FOUND_MEMBER));
+
+        return applyRepository.findByMemberIdInActiveRecruit(memberId, LocalDateTime.now())
                 .map(ApplyStatusResponse::of)
                 .orElseThrow(() -> new ApplyException(NOT_FOUND_APPLY));
     }
@@ -190,6 +193,7 @@ public class ApplyService implements ApplyUsecase {
                 .name(request.name())
                 .phoneNumber(request.phoneNumber())
                 .jobFamily(request.jobFamily())
+                .region(request.region())
                 .careerDetails(request.careerDetails())
                 .experiencePeriod(request.experiencePeriod())
                 .interestedDomains(request.interestedDomains())
@@ -199,11 +203,15 @@ public class ApplyService implements ApplyUsecase {
     }
 
     private void createApplyIfNotExists(Member member, JobFamily jobFamily) {
-        applyRepository.findByMemberId(member.getId()).orElseGet(() -> {
-            var recruit = getPeriodRecruit(jobFamily);
-            var newApply = Apply.createApply(member, recruit);
-            return applyRepository.save(newApply);
-        });
+        if (!applyRepository.existsByMemberIdInActiveRecruit(member.getId(), LocalDateTime.now())) {
+            try {
+                var recruit = getPeriodRecruit(jobFamily);
+                var newApply = Apply.createApply(member, recruit);
+                applyRepository.save(newApply);
+            } catch (DataIntegrityViolationException e) {
+                log.warn("지원서 생성 중 레이스 컨디션 발생. memberId: {}. 이미 지원서가 존재합니다.", member.getId());
+            }
+        }
     }
 
     private void validateQuestions(final Map<String, String> answers, final Recruit recruit) {

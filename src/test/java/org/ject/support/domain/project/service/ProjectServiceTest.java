@@ -6,6 +6,7 @@ import org.ject.support.domain.member.entity.Team;
 import org.ject.support.domain.member.repository.MemberRepository;
 import org.ject.support.domain.project.dto.ProjectDetailResponse;
 import org.ject.support.domain.project.dto.ProjectIntroResponse;
+import org.ject.support.domain.project.dto.ProjectSummaryResponse;
 import org.ject.support.domain.project.entity.Project;
 import org.ject.support.domain.project.entity.ProjectIntro;
 import org.ject.support.domain.project.exception.ProjectException;
@@ -23,7 +24,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.ject.support.domain.project.entity.ProjectIntro.Category;
-import static org.ject.support.domain.project.entity.ProjectIntro.builder;
 import static org.mockito.Mockito.when;
 
 class ProjectServiceTest extends UnitTestSupport {
@@ -49,10 +49,10 @@ class ProjectServiceTest extends UnitTestSupport {
         productDesigners = List.of("designer1");
         frontendDevelopers = List.of("front1", "front2");
         backendDevelopers = List.of("back1", "back2", "back3");
-        ProjectIntro serviceIntro1 = createProjectIntro(1L, "serviceImage1.png", Category.SERVICE, 1);
-        ProjectIntro serviceIntro2 = createProjectIntro(2L, "serviceImage2.png", Category.SERVICE, 2);
-        ProjectIntro serviceIntro3 = createProjectIntro(3L, "serviceImage3.png", Category.SERVICE, 3);
-        ProjectIntro devIntro1 = createProjectIntro(4L, "devImage1.png", Category.DEV, 1);
+        ProjectIntro serviceIntro1 = createProjectIntro(1L, "serviceImage1.png", Category.SAMPLE, 1);
+        ProjectIntro serviceIntro2 = createProjectIntro(2L, "serviceImage2.png", Category.SAMPLE, 2);
+        ProjectIntro serviceIntro3 = createProjectIntro(3L, "serviceImage3.png", Category.SAMPLE, 3);
+        ProjectIntro devIntro1 = createProjectIntro(4L, "devImage1.png", Category.DESCRIPTION, 1);
         project = Project.builder()
                 .id(1L)
                 .summary("summary")
@@ -78,7 +78,6 @@ class ProjectServiceTest extends UnitTestSupport {
         ProjectDetailResponse result = projectService.findProjectDetails(1L);
 
         // then
-        assertThat(result.thumbnailUrl()).isEqualTo(project.getThumbnailUrl());
         assertThat(result.name()).isEqualTo(project.getName());
         assertThat(result.startDate()).isEqualTo(project.getStartDate());
         assertThat(result.endDate()).isEqualTo(project.getEndDate());
@@ -88,8 +87,8 @@ class ProjectServiceTest extends UnitTestSupport {
         assertThat(result.teamMemberNames().backendDevelopers()).hasSize(3);
         assertThat(result.description()).isEqualTo(project.getDescription());
         assertThat(result.serviceUrl()).isEqualTo(project.getServiceUrl());
-        assertThat(result.serviceIntros()).hasSize(3);
-        assertThat(result.devIntros()).hasSize(1);
+        assertThat(result.sampleImageUrls()).hasSize(3);
+        assertThat(result.descriptionImageUrls()).hasSize(1);
     }
 
     @Test
@@ -103,7 +102,7 @@ class ProjectServiceTest extends UnitTestSupport {
         ProjectDetailResponse result = projectService.findProjectDetails(1L);
 
         // then
-        assertThat(result.serviceIntros())
+        assertThat(result.sampleImageUrls())
                 .extracting(ProjectIntroResponse::sequence)
                 .containsExactly(1, 2, 3);
     }
@@ -132,8 +131,34 @@ class ProjectServiceTest extends UnitTestSupport {
         assertThat(result.techStack()).containsExactly("java", "Spring", "JPA", "QueryDSL", "MySQL", "AWS");
     }
 
+    @Test
+    void 전체_프로젝트_요약_조회() {
+        Project p1 = Project.builder().id(10L).category(Project.Category.SEMESTER_1).build();
+        Project p2 = Project.builder().id(11L).category(Project.Category.SEMESTER_2).build();
+        Project p3 = Project.builder().id(12L).category(Project.Category.SEMESTER_2).build();
+
+        when(projectRepository.findAll()).thenReturn(List.of(p1, p2, p3));
+
+        // when
+        ProjectSummaryResponse summary = projectService.findProjectSummary();
+
+        // then
+        assertThat(summary.categorySummaries()).hasSize(1 + Project.Category.values().length);
+        assertThat(summary.categorySummaries().get(0).categoryName()).isEqualTo("ALL");
+        assertThat(summary.categorySummaries().get(0).count()).isEqualTo(3L);
+
+        assertThat(summary.categorySummaries().get(1).categoryName()).isEqualTo(Project.Category.SEMESTER_1.name());
+        assertThat(summary.categorySummaries().get(1).count()).isEqualTo(1L);
+
+        assertThat(summary.categorySummaries().get(2).categoryName()).isEqualTo(Project.Category.SEMESTER_2.name());
+        assertThat(summary.categorySummaries().get(2).count()).isEqualTo(2L);
+
+        assertThat(summary.categorySummaries().get(3).categoryName()).isEqualTo(Project.Category.SEMESTER_3.name());
+        assertThat(summary.categorySummaries().get(3).count()).isEqualTo(0L);
+    }
+
     private ProjectIntro createProjectIntro(Long id, String imageUrl, Category category, int sequence) {
-        return builder()
+        return ProjectIntro.builder()
                 .id(id)
                 .imageUrl(imageUrl)
                 .category(category)

@@ -10,8 +10,7 @@ import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
-import java.security.Key;
-import java.util.Date;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.ject.support.common.exception.GlobalException;
@@ -22,6 +21,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
+
+import java.security.Key;
+import java.util.Date;
 
 import static org.ject.support.common.exception.GlobalErrorCode.AUTHENTICATION_REQUIRED;
 
@@ -53,6 +55,24 @@ public class JwtTokenProvider {
         claims.setSubject(authentication.getName());
         Date now = new Date();
         Date expireDate = new Date(now.getTime() + accessExpirationTime);
+
+        return Jwts.builder()
+                .setClaims(claims)
+                .setIssuedAt(now)
+                .setExpiration(expireDate)
+                .signWith(secretKey)
+                .compact();
+    }
+
+    public String createToken(Claims claims, long expirationMillis) {
+        if (claims == null) {
+            throw new IllegalArgumentException("Claims cannot be null");
+        }
+        if (expirationMillis <= 0) {
+            throw new IllegalArgumentException("Expiration time must be positive");
+        }
+        Date now = new Date();
+        Date expireDate = new Date(now.getTime() + expirationMillis);
 
         return Jwts.builder()
                 .setClaims(claims)
@@ -186,7 +206,19 @@ public class JwtTokenProvider {
                 .signWith(secretKey)
                 .compact();
     }
-    
+
+    /**
+     * 인증번호 검증 쿠키 삭제
+     */
+    public void deleteVerificationCookie(HttpServletResponse response) {
+        Cookie cookie = new Cookie("verificationToken", null);
+        cookie.setPath("/");
+        cookie.setHttpOnly(true);
+        cookie.setSecure(true);
+        cookie.setMaxAge(0);
+        response.addCookie(cookie);
+    }
+
     /**
      * 인증번호 검증 토큰에서 이메일 추출
      */

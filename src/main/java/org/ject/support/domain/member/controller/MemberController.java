@@ -8,6 +8,7 @@ import org.ject.support.common.security.AuthPrincipal;
 import org.ject.support.common.security.CustomSuccessHandler;
 import org.ject.support.common.security.jwt.JwtTokenProvider;
 import org.ject.support.domain.member.dto.MemberDto;
+import org.ject.support.domain.member.dto.MemberProfileResponse;
 import org.ject.support.domain.member.service.MemberService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -49,6 +50,9 @@ public class MemberController implements MemberApiSpec {
         Authentication authentication = memberService.registerTempMember(registerRequest, email);
         customSuccessHandler.onAuthenticationSuccess(request, response, authentication);
 
+        // verification 토큰은 더 이상 필요 없으므로 삭제
+        jwtTokenProvider.deleteVerificationCookie(response);
+
         return true;
     }
 
@@ -82,5 +86,12 @@ public class MemberController implements MemberApiSpec {
     public boolean isInitialMember(@AuthPrincipal Long memberId) {
         // 임시회원의 최초 프로필 정보 등록 여부 확인
         return memberService.checkIsInitialed(memberId);
+    }
+
+    @Override
+    @GetMapping("/me")
+    @PreAuthorize("hasRole('ROLE_APPLY') or hasRole('ROLE_SEMESTER')")
+    public MemberProfileResponse getCurrentMember(@AuthPrincipal Long memberId) {
+        return memberService.getMemberProfile(memberId);
     }
 }

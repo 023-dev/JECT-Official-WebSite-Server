@@ -1,26 +1,11 @@
 package org.ject.support.domain.apply.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.ject.support.domain.apply.domain.Apply.Status.JOINED;
-import static org.ject.support.domain.apply.domain.Apply.Status.SUBMITTED;
-import static org.ject.support.domain.apply.domain.Apply.Status.TEMP_SAVED;
-import static org.ject.support.domain.member.JobFamily.BE;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import org.ject.support.base.UnitTestSupport;
 import org.ject.support.common.util.Map2JsonSerializer;
 import org.ject.support.common.util.String2MapSerializer;
 import org.ject.support.domain.apply.domain.ApplicationForm;
 import org.ject.support.domain.apply.domain.Apply;
+import org.ject.support.domain.apply.dto.ApplyPortfolioDto;
 import org.ject.support.domain.apply.dto.ApplyProfileRequest;
 import org.ject.support.domain.apply.dto.ApplyStatusResponse;
 import org.ject.support.domain.apply.dto.TempApplicationFormResponse;
@@ -33,6 +18,7 @@ import org.ject.support.domain.member.ExperiencePeriod;
 import org.ject.support.domain.member.InterestedDomain;
 import org.ject.support.domain.member.JobFamily;
 import org.ject.support.domain.member.MemberStatus;
+import org.ject.support.domain.member.Region;
 import org.ject.support.domain.member.Role;
 import org.ject.support.domain.member.entity.Member;
 import org.ject.support.domain.member.repository.MemberRepository;
@@ -45,6 +31,26 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.springframework.context.ApplicationEventPublisher;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.ject.support.domain.apply.domain.Apply.Status.JOINED;
+import static org.ject.support.domain.apply.domain.Apply.Status.SUBMITTED;
+import static org.ject.support.domain.apply.domain.Apply.Status.TEMP_SAVED;
+import static org.ject.support.domain.member.JobFamily.BE;
+import static org.ject.support.domain.member.JobFamily.PD;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class ApplyServiceTest extends UnitTestSupport {
 
@@ -68,6 +74,9 @@ class ApplyServiceTest extends UnitTestSupport {
 
     @Mock
     String2MapSerializer string2MapSerializer;
+
+    @Mock
+    ApplicationEventPublisher applicationEventPublisher;
 
     @Test
     void 지원서_제출_성공() {
@@ -93,7 +102,7 @@ class ApplyServiceTest extends UnitTestSupport {
         Apply apply = getApply(1L, recruit, applicant, applicationForm, TEMP_SAVED);
 
         when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
-        when(applyRepository.findByMemberId(applicant.getId())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
         when(map2JsonSerializer.serializeAsString(answers)).thenReturn(answers.toString());
 
         // when
@@ -109,6 +118,57 @@ class ApplyServiceTest extends UnitTestSupport {
 
         // 3. apply의 상태가 SUBMITTED로 변경되었는지 확인
         assertThat(apply.getStatus()).isEqualTo(SUBMITTED);
+    }
+
+    @Test
+    void 지원서_제출_시_PD직군은_포트폴리오가_없으면_실패() {
+        // given
+        List<Question> questions = List.of(
+                getQuestion(1L, 1, "문항 1", "설명 1"));
+
+        Recruit recruit = getActiveRecruit(PD, questions);
+        Member applicant = getApplicant(1L, "email@test.com");
+        Map<String, String> answers = Map.of("1", "답변 1");
+        ApplicationForm applicationForm = getApplicationForm(answers.toString());
+        Apply apply = getApply(1L, recruit, applicant, applicationForm, TEMP_SAVED);
+
+        when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
+        when(map2JsonSerializer.serializeAsString(answers)).thenReturn(answers.toString());
+
+        // expected
+        assertThatThrownBy(() -> applyService.submitApplication(1L, PD, answers, List.of()))
+                .isInstanceOf(ApplyException.class)
+                .extracting("errorCode")
+                .isEqualTo(ApplyErrorCode.PORTFOLIO_REQUIRED);
+    }
+
+    @Test
+    void 지원서_제출_시_PD직군은_포트폴리오가_있으면_성공() {
+        // given
+        List<Question> questions = List.of(
+                getQuestion(1L, 1, "문항 1", "설명 1"));
+
+        Recruit recruit = getActiveRecruit(PD, questions);
+        Member applicant = getApplicant(1L, "email@test.com");
+        Map<String, String> answers = Map.of("1", "답변 1");
+        ApplicationForm applicationForm = getApplicationForm(answers.toString());
+        Apply apply = getApply(1L, recruit, applicant, applicationForm, TEMP_SAVED);
+
+        List<ApplyPortfolioDto> portfolios = List.of(
+                new ApplyPortfolioDto("url", "name", "100", "1")
+        );
+
+        when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
+        when(map2JsonSerializer.serializeAsString(answers)).thenReturn(answers.toString());
+
+        // when
+        applyService.submitApplication(1L, PD, answers, portfolios);
+
+        // then
+        assertThat(apply.getStatus()).isEqualTo(SUBMITTED);
+        assertThat(applicationForm.getPortfolios()).hasSize(1);
     }
 
     @Test
@@ -136,10 +196,37 @@ class ApplyServiceTest extends UnitTestSupport {
     }
 
     @Test
+    void 지원상태_조회_시_프로필작성을_하지_않았을_경우_예외발생() {
+        // given
+        Member member = Member.builder()
+                .id(1L)
+                .name("지원자명")
+                .phoneNumber("01012345678")
+                .build();
+        given(memberRepository.findById(member.getId()))
+                .willReturn(Optional.of(member));
+        given(applyRepository.findByMemberIdInActiveRecruit(eq(member.getId()), any()))
+                .willReturn(Optional.empty());
+
+        // expected
+        assertThatThrownBy(() -> applyService.checkApplyStatus(member.getId()))
+                .isInstanceOf(ApplyException.class)
+                .extracting("errorCode")
+                .isEqualTo(ApplyErrorCode.NOT_FOUND_APPLY);
+    }
+
+    @Test
     void 작성_중인_지원서가_있는_경우_TEMP_SAVED_반환() {
         // given
-        when(applyRepository.findByMemberId(any()))
-                .thenReturn(Optional.of(
+        Member member = Member.builder()
+                .id(1L)
+                .name("지원자명")
+                .phoneNumber("01012345678")
+                .build();
+        given(memberRepository.findById(member.getId()))
+                .willReturn(Optional.of(member));
+        given(applyRepository.findByMemberIdInActiveRecruit(eq(member.getId()), any()))
+                .willReturn(Optional.of(
                         Apply.builder()
                                 .id(1L)
                                 .status(TEMP_SAVED)
@@ -147,17 +234,24 @@ class ApplyServiceTest extends UnitTestSupport {
                 ));
 
         // when
-        ApplyStatusResponse result = applyService.checkApplyStatus(1L);
+        ApplyStatusResponse result = applyService.checkApplyStatus(member.getId());
 
         // then
-        assertThat(result).isEqualTo(new ApplyStatusResponse(TEMP_SAVED));
+        assertThat(result.status()).isEqualTo(TEMP_SAVED);
     }
 
     @Test
     void 지원서를_제출한_지원자에_대한_제출_상태_확인_시_SUBMITTED_반환() {
         // given
-        when(applyRepository.findByMemberId(any()))
-                .thenReturn(Optional.of(
+        Member member = Member.builder()
+                .id(1L)
+                .name("지원자명")
+                .phoneNumber("01012345678")
+                .build();
+        given(memberRepository.findById(member.getId()))
+                .willReturn(Optional.of(member));
+        given(applyRepository.findByMemberIdInActiveRecruit(eq(member.getId()), any()))
+                .willReturn(Optional.of(
                         Apply.builder()
                                 .id(1L)
                                 .status(SUBMITTED)
@@ -165,10 +259,10 @@ class ApplyServiceTest extends UnitTestSupport {
                 ));
 
         // when
-        ApplyStatusResponse result = applyService.checkApplyStatus(1L);
+        ApplyStatusResponse result = applyService.checkApplyStatus(member.getId());
 
         // then
-        assertThat(result).isEqualTo(new ApplyStatusResponse(SUBMITTED));
+        assertThat(result.status()).isEqualTo(SUBMITTED);
     }
 
     @Test
@@ -196,7 +290,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         String content = "newContent";
 
-        when(applyRepository.findByMemberId(any())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
         when(map2JsonSerializer.serializeAsString(answers)).thenReturn(content);
 
         // when
@@ -237,7 +331,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         Apply apply = getApply(1L, recruit, applicant, applicationForm, SUBMITTED);
 
-        when(applyRepository.findByMemberId(any())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
 
         // when, then
         assertThatThrownBy(() -> applyService.saveApplicationTemporarily(1L, answers, List.of()))
@@ -246,14 +340,13 @@ class ApplyServiceTest extends UnitTestSupport {
 
     @Test
     void 프로필_저장_전에_임시저장_시도_시_실패() {
-        // given: Member는 있지만 Apply는 없는 상황
+        // given
         long memberId = 1L;
         Map<String, String> answers = Map.of("1", "답변1");
 
-        // applyRepository.findByMemberId()가 Optional.empty()를 반환하도록 설정
-        given(applyRepository.findByMemberId(memberId)).willReturn(Optional.empty());
+        given(applyRepository.findByMemberIdInActiveRecruit(eq(memberId), any())).willReturn(Optional.empty());
 
-        // when & then: saveApplicationTemporarily를 호출하면 NOT_FOUND_APPLY 에러가 발생해야 함
+        // expected
         assertThatThrownBy(() -> applyService.saveApplicationTemporarily(memberId, answers, List.of()))
                 .isInstanceOf(ApplyException.class)
                 .extracting("errorCode")
@@ -288,7 +381,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         String newContent = "newContent";
 
-        when(applyRepository.findByMemberId(any())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
         when(map2JsonSerializer.serializeAsString(answers)).thenReturn(newContent);
 
         // when
@@ -318,7 +411,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         Apply apply = getApply(1L, recruit, getApplicant(1L, "email@test.com"), applicationForm, TEMP_SAVED);
 
-        when(applyRepository.findByMemberId(any())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(1L), any())).thenReturn(Optional.of(apply));
 
         // when
         applyService.deleteProfileAndTempApplicationForm(1L);
@@ -353,8 +446,8 @@ class ApplyServiceTest extends UnitTestSupport {
                 .content("content")
                 .build(), SUBMITTED);
 
-        when(applyRepository.findByMemberId(1L)).thenReturn(Optional.of(apply1));
-        when(applyRepository.findByMemberId(2L)).thenReturn(Optional.of(apply2));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(1L), any())).thenReturn(Optional.of(apply1));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(2L), any())).thenReturn(Optional.of(apply2));
 
         // when, then
         assertThatThrownBy(() -> applyService.deleteProfileAndTempApplicationForm(1L))
@@ -379,7 +472,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         Apply apply = getApply(1L, recruit, getApplicant(1L, "email@test.com"), tempApplicationForm, TEMP_SAVED);
 
-        when(applyRepository.findByMemberId(any())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(1L), any())).thenReturn(Optional.of(apply));
         when(string2MapSerializer.serializeAsMap(tempApplicationForm.getContent())).thenReturn(answers);
 
         // when
@@ -388,6 +481,7 @@ class ApplyServiceTest extends UnitTestSupport {
         // then
         assertThat(result.answers()).isEqualTo(answers);
         assertThat(result.portfolios()).isEmpty();
+        assertThat(result.jobFamily()).isEqualTo(BE);
     }
 
     @Test
@@ -401,7 +495,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         Apply apply = getApply(1L, getActiveRecruit(BE, questions), getApplicant(1L, "email@test.com"), null, JOINED);
 
-        when(applyRepository.findByMemberId(any())).thenReturn(Optional.of(apply));
+        when(applyRepository.findByMemberIdInActiveRecruit(eq(1L), any())).thenReturn(Optional.of(apply));
 
         // when, then
         assertThatThrownBy(() -> applyService.findTempApplicationForm(1L))
@@ -417,6 +511,7 @@ class ApplyServiceTest extends UnitTestSupport {
             "New Name",
             "010-1234-5678",
             JobFamily.FE,
+            Region.SEOUL,
             CareerDetails.STUDENT,
             ExperiencePeriod.NONE,
             List.of(InterestedDomain.GAME.getDescription(), InterestedDomain.EDUCATION.getDescription())
@@ -424,6 +519,7 @@ class ApplyServiceTest extends UnitTestSupport {
         Recruit recruit = getActiveRecruit(request.jobFamily(), List.of());
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
+        given(applyRepository.existsByMemberIdInActiveRecruit(eq(memberId), any())).willReturn(false);
         given(recruitRepository.findActiveRecruits(any())).willReturn(List.of(recruit));
 
         // when
@@ -448,27 +544,25 @@ class ApplyServiceTest extends UnitTestSupport {
         // given
         long memberId = 1L;
         Member member = getApplicant(memberId, "test@example.com");
-        Apply existingApply = getApply(1L, null, member, null, JOINED);
         ApplyProfileRequest request = new ApplyProfileRequest(
                 "New Name",
                 "010-1234-5678",
                 JobFamily.FE,
+                Region.SEOUL,
                 CareerDetails.STUDENT,
                 ExperiencePeriod.NONE,
                 List.of(InterestedDomain.GAME.getDescription(), InterestedDomain.EDUCATION.getDescription())
         );
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
-        given(applyRepository.findByMemberId(memberId)).willReturn(Optional.of(existingApply));
+        given(applyRepository.existsByMemberIdInActiveRecruit(eq(memberId), any())).willReturn(true);
 
         // when
         applyService.saveProfile(memberId, request);
 
         // then
-        // applyRepository.save()는 호출되지 않아야 함 (멱등성)
         verify(applyRepository, never()).save(any(Apply.class));
 
-        // Member의 프로필 정보는 업데이트되어야 함
         assertThat(member.getName()).isEqualTo(request.name());
         assertThat(member.getPhoneNumber()).isEqualTo(request.phoneNumber());
         assertThat(member.getJobFamily()).isEqualTo(request.jobFamily());
