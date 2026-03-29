@@ -41,8 +41,6 @@ aws:
   region: ap-northeast-2
   s3:
     bucket: ject-content-dev
-  dynamodb:
-    endpoint: http://localhost:8000
   cloudfront:
     domain: https://d1emvsnzj31pdh.cloudfront.net/
   ses:
@@ -63,9 +61,3 @@ security:
     allowed-origins-client-dev: http://localhost:3000
     cookie:
       domain: localhost
-
-notification:
-  discord:
-    webhook:
-      admin-login: dummy-url-for-test
-      supporter-token-issue: dummy-url-for-test

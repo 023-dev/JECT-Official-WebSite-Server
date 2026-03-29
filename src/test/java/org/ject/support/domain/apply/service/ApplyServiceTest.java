@@ -5,6 +5,7 @@ import org.ject.support.common.util.Map2JsonSerializer;
 import org.ject.support.common.util.String2MapSerializer;
 import org.ject.support.domain.apply.domain.ApplicationForm;
 import org.ject.support.domain.apply.domain.Apply;
+import org.ject.support.domain.apply.domain.ApplyStatus;
 import org.ject.support.domain.apply.dto.ApplyPortfolioDto;
 import org.ject.support.domain.apply.dto.ApplyProfileRequest;
 import org.ject.support.domain.apply.dto.ApplyStatusResponse;
@@ -40,9 +41,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.ject.support.domain.apply.domain.Apply.Status.JOINED;
-import static org.ject.support.domain.apply.domain.Apply.Status.SUBMITTED;
-import static org.ject.support.domain.apply.domain.Apply.Status.TEMP_SAVED;
+import static org.ject.support.domain.apply.domain.ApplyStatus.JOINED;
+import static org.ject.support.domain.apply.domain.ApplyStatus.SUBMITTED;
+import static org.ject.support.domain.apply.domain.ApplyStatus.TEMP_SAVED;
 import static org.ject.support.domain.member.JobFamily.BE;
 import static org.ject.support.domain.member.JobFamily.PD;
 import static org.mockito.ArgumentMatchers.any;
@@ -101,8 +102,8 @@ class ApplyServiceTest extends UnitTestSupport {
 
         Apply apply = getApply(1L, recruit, applicant, applicationForm, TEMP_SAVED);
 
-        when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
-        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
+        when(recruitRepository.findActiveRecruitByJobFamily(any(), any())).thenReturn(Optional.of(recruit));
+        when(applyRepository.findByMemberIdInActiveRecruitForUpdate(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
         when(map2JsonSerializer.serializeAsString(answers)).thenReturn(answers.toString());
 
         // when
@@ -132,8 +133,8 @@ class ApplyServiceTest extends UnitTestSupport {
         ApplicationForm applicationForm = getApplicationForm(answers.toString());
         Apply apply = getApply(1L, recruit, applicant, applicationForm, TEMP_SAVED);
 
-        when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
-        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
+        when(recruitRepository.findActiveRecruitByJobFamily(any(), any())).thenReturn(Optional.of(recruit));
+        when(applyRepository.findByMemberIdInActiveRecruitForUpdate(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
         when(map2JsonSerializer.serializeAsString(answers)).thenReturn(answers.toString());
 
         // expected
@@ -159,8 +160,8 @@ class ApplyServiceTest extends UnitTestSupport {
                 new ApplyPortfolioDto("url", "name", "100", "1")
         );
 
-        when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
-        when(applyRepository.findByMemberIdInActiveRecruit(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
+        when(recruitRepository.findActiveRecruitByJobFamily(any(), any())).thenReturn(Optional.of(recruit));
+        when(applyRepository.findByMemberIdInActiveRecruitForUpdate(eq(applicant.getId()), any())).thenReturn(Optional.of(apply));
         when(map2JsonSerializer.serializeAsString(answers)).thenReturn(answers.toString());
 
         // when
@@ -188,7 +189,7 @@ class ApplyServiceTest extends UnitTestSupport {
                 "3", "답변 3",
                 "4", "답변 4");
 
-        when(recruitRepository.findActiveRecruits(any())).thenReturn(List.of(recruit));
+        when(recruitRepository.findActiveRecruitByJobFamily(any(), any())).thenReturn(Optional.of(recruit));
 
         // when, then
         assertThatThrownBy(() -> applyService.submitApplication(1L, BE, answers, List.of()))
@@ -198,6 +199,7 @@ class ApplyServiceTest extends UnitTestSupport {
     @Test
     void 지원상태_조회_시_프로필작성을_하지_않았을_경우_예외발생() {
         // given
+        Long recruitId = 1L;
         Member member = Member.builder()
                 .id(1L)
                 .name("지원자명")
@@ -205,11 +207,11 @@ class ApplyServiceTest extends UnitTestSupport {
                 .build();
         given(memberRepository.findById(member.getId()))
                 .willReturn(Optional.of(member));
-        given(applyRepository.findByMemberIdInActiveRecruit(eq(member.getId()), any()))
+        given(applyRepository.findByMemberIdAndRecruitIdInActiveRecruit(eq(member.getId()), eq(recruitId), any()))
                 .willReturn(Optional.empty());
 
         // expected
-        assertThatThrownBy(() -> applyService.checkApplyStatus(member.getId()))
+        assertThatThrownBy(() -> applyService.checkApplyStatus(member.getId(), recruitId))
                 .isInstanceOf(ApplyException.class)
                 .extracting("errorCode")
                 .isEqualTo(ApplyErrorCode.NOT_FOUND_APPLY);
@@ -218,6 +220,7 @@ class ApplyServiceTest extends UnitTestSupport {
     @Test
     void 작성_중인_지원서가_있는_경우_TEMP_SAVED_반환() {
         // given
+        Long recruitId = 1L;
         Member member = Member.builder()
                 .id(1L)
                 .name("지원자명")
@@ -225,7 +228,7 @@ class ApplyServiceTest extends UnitTestSupport {
                 .build();
         given(memberRepository.findById(member.getId()))
                 .willReturn(Optional.of(member));
-        given(applyRepository.findByMemberIdInActiveRecruit(eq(member.getId()), any()))
+        given(applyRepository.findByMemberIdAndRecruitIdInActiveRecruit(eq(member.getId()), eq(recruitId), any()))
                 .willReturn(Optional.of(
                         Apply.builder()
                                 .id(1L)
@@ -234,7 +237,7 @@ class ApplyServiceTest extends UnitTestSupport {
                 ));
 
         // when
-        ApplyStatusResponse result = applyService.checkApplyStatus(member.getId());
+        ApplyStatusResponse result = applyService.checkApplyStatus(member.getId(), recruitId);
 
         // then
         assertThat(result.status()).isEqualTo(TEMP_SAVED);
@@ -243,6 +246,7 @@ class ApplyServiceTest extends UnitTestSupport {
     @Test
     void 지원서를_제출한_지원자에_대한_제출_상태_확인_시_SUBMITTED_반환() {
         // given
+        Long recruitId = 1L;
         Member member = Member.builder()
                 .id(1L)
                 .name("지원자명")
@@ -250,7 +254,7 @@ class ApplyServiceTest extends UnitTestSupport {
                 .build();
         given(memberRepository.findById(member.getId()))
                 .willReturn(Optional.of(member));
-        given(applyRepository.findByMemberIdInActiveRecruit(eq(member.getId()), any()))
+        given(applyRepository.findByMemberIdAndRecruitIdInActiveRecruit(eq(member.getId()), eq(recruitId), any()))
                 .willReturn(Optional.of(
                         Apply.builder()
                                 .id(1L)
@@ -259,10 +263,31 @@ class ApplyServiceTest extends UnitTestSupport {
                 ));
 
         // when
-        ApplyStatusResponse result = applyService.checkApplyStatus(member.getId());
+        ApplyStatusResponse result = applyService.checkApplyStatus(member.getId(), recruitId);
 
         // then
         assertThat(result.status()).isEqualTo(SUBMITTED);
+    }
+
+    @Test
+    void 동일_회원이라도_다른_공고ID로_조회하면_지원상태_조회_실패() {
+        // given
+        Long requestedRecruitId = 2L;
+        Member member = Member.builder()
+                .id(1L)
+                .name("지원자명")
+                .phoneNumber("01012345678")
+                .build();
+        given(memberRepository.findById(member.getId()))
+                .willReturn(Optional.of(member));
+        given(applyRepository.findByMemberIdAndRecruitIdInActiveRecruit(eq(member.getId()), eq(requestedRecruitId), any()))
+                .willReturn(Optional.empty());
+
+        // expected
+        assertThatThrownBy(() -> applyService.checkApplyStatus(member.getId(), requestedRecruitId))
+                .isInstanceOf(ApplyException.class)
+                .extracting("errorCode")
+                .isEqualTo(ApplyErrorCode.NOT_FOUND_APPLY);
     }
 
     @Test
@@ -520,7 +545,7 @@ class ApplyServiceTest extends UnitTestSupport {
 
         given(memberRepository.findById(memberId)).willReturn(Optional.of(member));
         given(applyRepository.existsByMemberIdInActiveRecruit(eq(memberId), any())).willReturn(false);
-        given(recruitRepository.findActiveRecruits(any())).willReturn(List.of(recruit));
+        given(recruitRepository.findActiveRecruitByJobFamily(any(), any())).willReturn(Optional.of(recruit));
 
         // when
         applyService.saveProfile(memberId, request);
@@ -602,7 +627,7 @@ class ApplyServiceTest extends UnitTestSupport {
                 .build();
     }
 
-    private Apply getApply(Long id, Recruit recruit, Member applicant, ApplicationForm applicationForm, Apply.Status status) {
+    private Apply getApply(Long id, Recruit recruit, Member applicant, ApplicationForm applicationForm, ApplyStatus status) {
         return Apply.builder()
                 .id(id)
                 .recruit(recruit)

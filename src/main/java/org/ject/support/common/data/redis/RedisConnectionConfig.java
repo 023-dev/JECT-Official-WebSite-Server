@@ -25,6 +25,9 @@ public class RedisConnectionConfig {
     @Value("${spring.data.redis.local}")
     private boolean isLocal;
 
+    @Value("${spring.data.redis.ssl.enabled:false}")
+    private boolean useSsl;
+
     @Bean
     @ConditionalOnMissingBean
     public RedisConnectionFactory redisConnectionFactory() {
@@ -39,11 +42,14 @@ public class RedisConnectionConfig {
             return new LettuceConnectionFactory(redisConfig);
         }
 
-        LettuceClientConfiguration clientConfig =
-                LettuceClientConfiguration.builder()
-                        .useSsl()
-                        .build();
+        if (useSsl) {
+            LettuceClientConfiguration clientConfig =
+                    LettuceClientConfiguration.builder()
+                            .useSsl()
+                            .build();
+            return new LettuceConnectionFactory(redisConfig, clientConfig);
+        }
 
-        return new LettuceConnectionFactory(redisConfig, clientConfig);
+        return new LettuceConnectionFactory(redisConfig);
     }
 }

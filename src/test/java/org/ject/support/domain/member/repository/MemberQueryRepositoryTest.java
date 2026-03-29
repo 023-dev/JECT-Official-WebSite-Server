@@ -2,12 +2,13 @@ package org.ject.support.domain.member.repository;
 
 import org.ject.support.domain.apply.domain.ApplicationForm;
 import org.ject.support.domain.apply.domain.Apply;
+import org.ject.support.domain.apply.domain.ApplyStatus;
 import org.ject.support.domain.apply.repository.ApplicationFormRepository;
 import org.ject.support.domain.apply.repository.ApplyRepository;
 import org.ject.support.domain.member.JobFamily;
 import org.ject.support.domain.member.MemberStatus;
 import org.ject.support.domain.member.Role;
-import org.ject.support.domain.admin.dto.MemberResponse;
+import org.ject.support.domain.member.dto.MemberProjection;
 import org.ject.support.domain.member.dto.TeamMemberNames;
 import org.ject.support.domain.member.entity.Member;
 import org.ject.support.domain.member.entity.Team;
@@ -28,9 +29,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.ject.support.domain.apply.domain.Apply.Status.JOINED;
-import static org.ject.support.domain.apply.domain.Apply.Status.SUBMITTED;
-import static org.ject.support.domain.apply.domain.Apply.Status.TEMP_SAVED;
+import static org.ject.support.domain.apply.domain.ApplyStatus.JOINED;
+import static org.ject.support.domain.apply.domain.ApplyStatus.SUBMITTED;
+import static org.ject.support.domain.apply.domain.ApplyStatus.TEMP_SAVED;
 import static org.ject.support.domain.member.JobFamily.BE;
 import static org.ject.support.domain.member.JobFamily.FE;
 import static org.ject.support.domain.member.JobFamily.PD;
@@ -76,10 +77,11 @@ class MemberQueryRepositoryTest {
         be2 = createMember("왕젝트", "01011112226", "be2Email", BE);
         memberRepository.saveAll(List.of(pd1, fe1, be1, be2));
 
-        teamApd1 = createTeamMember(teamA, pd1);
-        teamAfe1 = createTeamMember(teamA, fe1);
-        teamAbe1 = createTeamMember(teamA, be1);
-        teamAbe2 = createTeamMember(teamA, be2);
+        // TeamMember 생성 시 해당 팀에서의 jobFamily 설정
+        teamApd1 = createTeamMember(teamA, pd1, PD);
+        teamAfe1 = createTeamMember(teamA, fe1, FE);
+        teamAbe1 = createTeamMember(teamA, be1, BE);
+        teamAbe2 = createTeamMember(teamA, be2, BE);
         teamMemberRepository.saveAll(List.of(teamApd1, teamAfe1, teamAbe1, teamAbe2));
     }
 
@@ -93,6 +95,60 @@ class MemberQueryRepositoryTest {
         assertThat(teamMemberNames.productDesigners()).hasSize(1);
         assertThat(teamMemberNames.frontendDevelopers()).hasSize(1);
         assertThat(teamMemberNames.backendDevelopers()).hasSize(2);
+    }
+
+    @Test
+    void TeamMember_jobFamily_기반_직군별_팀원_이름_조회() {
+        // given
+        // 1기에는 BE로, 2기에는 PM으로 활동
+        // 1기 팀 (teamA는 setUp에서 생성됨, semesterId=1)
+        // 2기 팀 생성
+        Team otherTeam = teamRepository.save(Team.builder().name("otherTeam").semesterId(2L).build());
+
+        // Member.jobFamily는 점진적 적용으로 유지되는 값
+        Member member = memberRepository.save(createMember("김젝트", "01099998888", "ject@test.com", BE));
+
+        // 1기 팀A에서는 BE로 참여
+        teamMemberRepository.save(createTeamMember(teamA, member, BE));
+
+        // 2기 팀에서는 PM으로 참여
+        teamMemberRepository.save(createTeamMember(otherTeam, member, PM));
+
+        // when
+        // 2기 팀 조회
+        TeamMemberNames team2ndMemberNames = memberRepository.findMemberNamesByTeamId(otherTeam.getId());
+
+        // then
+        // 2기 팀에서는 PM으로 조회
+        assertThat(team2ndMemberNames.productManagers()).hasSize(1);
+        assertThat(team2ndMemberNames.productManagers()).contains("김젝트");
+        assertThat(team2ndMemberNames.backendDevelopers()).isEmpty();
+
+        // when
+        // 1기 팀 조회
+        TeamMemberNames teamAMemberNames = memberRepository.findMemberNamesByTeamId(teamA.getId());
+
+        // then
+        // 1기 팀에서는 BE로 조회되어야 함
+        assertThat(teamAMemberNames.backendDevelopers()).contains("김젝트");
+    }
+
+    @Test
+    void TeamMember_jobFamily가_null이면_Member_jobFamily로_fallback() {
+        // given - TeamMember.jobFamily가 null인 경우 (기존 데이터 호환성)
+        Team teamC = teamRepository.save(createTeam("teamC"));
+
+        Member fallbackMember = memberRepository.save(createMember("폴백", "01088887777", "fallback@test.com", FE));
+
+        // TeamMember에 jobFamily를 설정하지 않음 (null)
+        TeamMember teamCMember = teamMemberRepository.save(createTeamMember(teamC, fallbackMember));
+
+        // when
+        TeamMemberNames teamMemberNames = memberRepository.findMemberNamesByTeamId(teamC.getId());
+
+        // then - Member.jobFamily 기준으로 FE에 속해야 함
+        assertThat(teamMemberNames.frontendDevelopers()).hasSize(1);
+        assertThat(teamMemberNames.frontendDevelopers()).contains("폴백");
     }
 
     @Test
@@ -162,7 +218,7 @@ class MemberQueryRepositoryTest {
         assertThat(result.getContent()).hasSize(2);
         assertThat(result.getTotalElements()).isEqualTo(2);
         assertThat(result.getContent())
-                .extracting(MemberResponse::name)
+                .extracting(MemberProjection::name)
                 .containsExactly(admin2.getName(), admin1.getName()); // createdAt desc 순서
     }
 
@@ -187,10 +243,10 @@ class MemberQueryRepositoryTest {
         assertThat(result.getContent()).hasSize(2);
         assertThat(result.getTotalElements()).isEqualTo(2);
         assertThat(result.getContent())
-                .extracting(MemberResponse::jobFamily)
+                .extracting(MemberProjection::jobFamily)
                 .containsOnly(JobFamily.BE);
         assertThat(result.getContent())
-                .extracting(MemberResponse::name)
+                .extracting(MemberProjection::name)
                 .containsExactly(admin3.getName(), admin1.getName()); // createdAt desc 순서
     }
 
@@ -216,10 +272,10 @@ class MemberQueryRepositoryTest {
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getTotalElements()).isEqualTo(1);
         assertThat(result.getContent())
-                .extracting(MemberResponse::semesterName)
-                .containsOnly("2");
+                .extracting(MemberProjection::semesterName)
+                .containsOnly("2기");
         assertThat(result.getContent())
-                .extracting(MemberResponse::name)
+                .extracting(MemberProjection::name)
                 .containsExactlyInAnyOrder(semester2Member1.getName());
     }
 
@@ -246,13 +302,13 @@ class MemberQueryRepositoryTest {
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getTotalElements()).isEqualTo(1);
         assertThat(result.getContent())
-                .extracting(MemberResponse::jobFamily)
+                .extracting(MemberProjection::jobFamily)
                 .containsOnly(JobFamily.BE);
         assertThat(result.getContent())
-                .extracting(MemberResponse::semesterName)
-                .containsOnly("2");
+                .extracting(MemberProjection::semesterName)
+                .containsOnly("2기");
         assertThat(result.getContent())
-                .extracting(MemberResponse::name)
+                .extracting(MemberProjection::name)
                 .containsExactly(semester2BE1.getName()); // createdAt desc 순서
     }
 
@@ -277,7 +333,7 @@ class MemberQueryRepositoryTest {
         // then
         assertThat(result.getContent())
                 .isNotEmpty()
-                .extracting(MemberResponse::name)
+                .extracting(MemberProjection::name)
                 .doesNotContain(deletedMember.getName());
     }
 
@@ -343,6 +399,14 @@ class MemberQueryRepositoryTest {
                 .build();
     }
 
+    private TeamMember createTeamMember(Team team, Member member, JobFamily jobFamily) {
+        return TeamMember.builder()
+                .team(team)
+                .member(member)
+                .jobFamily(jobFamily)
+                .build();
+    }
+
     private Recruit createRecruit(Semester semester, JobFamily jobFamily) {
         return Recruit.builder()
                 .semester(semester)
@@ -352,7 +416,7 @@ class MemberQueryRepositoryTest {
                 .build();
     }
 
-    private Apply createApply(Recruit recruit, Member member, Apply.Status status) {
+    private Apply createApply(Recruit recruit, Member member, ApplyStatus status) {
         return applyRepository.save(Apply.builder()
                 .member(member)
                 .recruit(recruit)
